@@ -126,6 +126,7 @@ def compute_ecdf_curve(ranking, maxrank=None):
 
     curve = [(rank, float(idx + 1) / numpos)
              for idx, rank in enumerate(sort)]
+
     if curve[0][0] > 0:
         curve.insert(0, (0, 0.0))
     curve.append((maxrank, 1.0))
@@ -133,7 +134,7 @@ def compute_ecdf_curve(ranking, maxrank=None):
     return curve
 
 
-def dkw_bounds(labels, decision_values, ci_width=0.05, presorted=False):
+def dkw_bounds(labels, decision_values, ci_width=0.95, presorted=False):
     """Computes the Dvoretzky-Kiefer-Wolfowitz confidence band for the empirical CDF
     at the given alpha level for the given ranking.
 
@@ -162,15 +163,16 @@ def dkw_bounds(labels, decision_values, ci_width=0.05, presorted=False):
     """
     maxrank = len(labels)
     if presorted:
-        sorted_labels = labels
+        sorted_labels = labels[:]
     else:
-        sorted_labels = map(op.itemgetter(1),
-                            sorted(zip(decision_values, labels),
-                                   reverse=True))
-    known_pos_ranks = [rank for rank, label in enumerate(sorted_labels) if label]
+        sort_labels, _ = zip(*sorted(zip(labels, decision_values),
+                                     key=op.itemgetter(1), reverse=True))
+    known_pos_ranks = [idx for idx, lab in enumerate(sort_labels) if lab]
+    ecdf = compute_ecdf_curve(known_pos_ranks)#, maxrank)
+
     alpha = 1.0 - ci_width
     epsilon = math.sqrt(math.log(2.0 / alpha) / (2 * len(known_pos_ranks)))
-    ecdf = compute_ecdf_curve(known_pos_ranks, maxrank)
+
     new_ranks, TPRs = zip(*ecdf)
     lower = [max(0, TPR - epsilon) for TPR in TPRs]
     upper = [min(1, TPR + epsilon) for TPR in TPRs]
@@ -224,10 +226,11 @@ def _remove_duplicates(xs, ys, last=True):
         new_ys.append(ys[idx])
         idx += 1
         while last and idx < n and new_xs[-1] == xs[idx]:
-            new_ys[-1] = ys[idx]
+            new_ys[-1] = max(new_ys[-1], ys[idx])
             idx += 1
 
     return new_xs, new_ys
+
 
 def zoh(xs, ys, presorted=False):
     """Returns a function of x that interpolates with zero-order hold between known values.
@@ -256,7 +259,7 @@ def zoh(xs, ys, presorted=False):
 
     """
     if not presorted:
-        xs[:], ys[:] = zip(*sorted(zip(xs, ys)))
+        xs, ys = zip(*sorted(zip(xs, ys)))
         xs = array.array('f', xs)
         ys = array.array('f', ys)
 
@@ -264,17 +267,19 @@ def zoh(xs, ys, presorted=False):
     xs, ys = _remove_duplicates(xs, ys)
 
     def f(x):
-        if xs[f.curr_idx] > x: f.curr_idx = 0
+        if f.xs[f.curr_idx] > x: f.curr_idx = 0
         idx = f.curr_idx
 
-        if xs[0] > x: return ys[0]
-        if xs[-1] < x: return ys[-1]
-        while idx < nx and xs[idx] <= x:
+        if f.xs[0] > x: return f.ys[0]
+        if f.xs[-1] < x: return f.ys[-1]
+        while idx < nx and f.xs[idx] <= x:
             idx += 1
 
-        return ys[idx - 1]
+        return f.ys[idx - 1]
 
     f.curr_idx = 0
+    f.xs = xs
+    f.ys = ys
     return f
 
 def bootstrap_ecdf_bounds(labels, decision_values,
@@ -291,15 +296,16 @@ def bootstrap_ecdf_bounds(labels, decision_values,
 
     if presorted: known_pos_ranks = [rank for rank, label in enumerate(labels) if label]
     else:
-        sorted_labels = map(op.itemgetter(1),
-                            sorted(zip(decision_values, labels), reverse=True))
-        known_pos_ranks = [rank for rank, label in enumerate(sorted_labels) if label]
+        sort_labels, sort_dv = zip(*sorted(zip(labels, decision_values),
+                                           key=op.itemgetter(1),
+                                           reverse=True))
+        known_pos_ranks = [idx for idx, lab in enumerate(sort_labels) if lab]
 
     ecdf_bounds = _bootstrap_band(known_pos_ranks, ci_width=ci_width,
                                   nboot=nboot, pmap=pmap)
 
-    return _lb_ub(lower=zoh(*zip(*ecdf_bounds.lower), presorted=True),
-                  upper=zoh(*zip(*ecdf_bounds.upper), presorted=True))
+    return _lb_ub(lower=zoh(*zip(*ecdf_bounds.lower)),
+                  upper=zoh(*zip(*ecdf_bounds.upper)))
 
 
 def find_cutoff(ranks, n, last_cut, cutoff_rank):
@@ -382,7 +388,7 @@ def compute_contingency_tables(labels, decision_values, reference_lb=None,
 
     # iterate over ranks
     if ranks: ranks[:] = sorted(ranks)
-    else: ranks = range(len(labels))
+    else: ranks = known_pos_ranks
     for rank in ranks:
         ct = ContingencyTable()
 
@@ -402,13 +408,13 @@ def compute_contingency_tables(labels, decision_values, reference_lb=None,
         if unlabeled_ranks:
             cut_unl = find_cutoff(unlabeled_ranks, nunl, cut_unl, rank)
 
-            if reference_lb:
+            if reference_lb is not None:
                 TPR = reference_lb(rank)
                 ct_lb = surrogates_contingency(cut_unl, nunl, TPR, npos_in_unl,
                                                lower=True)
                 cts_lower.append(ct + ct_lb)
 
-            if reference_ub:
+            if reference_ub is not None:
                 TPR = reference_ub(rank)
                 ct_ub = surrogates_contingency(cut_unl, nunl, TPR, npos_in_unl,
                                                lower=False)
@@ -416,62 +422,104 @@ def compute_contingency_tables(labels, decision_values, reference_lb=None,
 
     return _lb_ub(lower=cts_lower, upper=cts_upper)
 
+def get_contingency_tables(labels, decision_values, beta=0.0, cdf_bounds=None,
+                           ci_fun=bootstrap_ecdf_bounds, presorted=False):
+    """Computes contingency tables, using any intermediate results when available
+    or else from scratch.
+
+    :param labels: the labels, such that True=known positive, False=known negative, None=unlabeled
+    :type labels: iterable
+    :param decision_values: the decision values
+    :type decision_values: iterable
+    :param beta: fraction of positives in the unlabeled set
+    :type beta: double
+    :param cdf_bounds: precomputed bounds on rank CDF of known positives
+    :type cdf_bounds: _lb_ub containing lists of (rank, TPR)-pairs
+    :param ci_fun: function to compute CDF bounds, ignored if cdf_bounds are given
+    :type ci_fun: callable
+    :param presorted: are labels and decision values already sorted (by descending decision values)
+    :type presorted: boolean
+
+    """
+    if presorted:
+        sorted_dv = decision_values
+        sorted_labels = labels
+    else:
+        sorted_labels, sorted_dv = zip(*sorted(zip(labels, decision_values),
+                                                key=op.itemgetter(1),
+                                                reverse=True))
+
+    # compute confidence interval on rank CDF of known positives
+    # if no bounds are given
+    if not cdf_bounds:
+        cdf_bounds = ci_fun(sorted_labels, sorted_dv, presorted=True)
+
+    tables = compute_contingency_tables(labels=sorted_labels,
+                                        decision_values=sorted_dv,
+                                        reference_lb=cdf_bounds.lower,
+                                        reference_ub=cdf_bounds.upper,
+                                        beta=beta, presorted=True)
+    return tables
+
+
 def roc_bounds(labels, decision_values, beta=0.0,
                ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
                tables=None, presorted=False):
-    """Returns bounds on the ROC curve."""
+    """Returns bounds on the ROC curve.
+
+    :param labels: the labels, such that True=known positive, False=known negative, None=unlabeled
+    :type labels: iterable
+    :param decision_values: the decision values
+    :type decision_values: iterable
+    :param beta: fraction of positives in the unlabeled set
+    :type beta: double
+    :param cdf_bounds: precomputed bounds on rank CDF of known positives
+    :type cdf_bounds: _lb_ub containing lists of (rank, TPR)-pairs
+    :param ci_fun: function to compute CDF bounds, ignored if cdf_bounds are given
+    :type ci_fun: callable
+    :param presorted: are labels and decision values already sorted (by descending decision values)
+    :type presorted: boolean
+
+    """
 
     # compute contingency tables if none are given
-    if not tables:
-        if presorted:
-            sorted_dv = decision_values
-            sorted_labels = labels
-        else:
-            sorted_dv, sorted_labels = zip(*sorted(zip(decision_values, labels),
-                                                   reverse=True))
-
-        # compute confidence interval on rank CDF of known positives
-        # if no bounds are given
-        if not cdf_bounds:
-            cdf_bounds = ci_fun(sorted_labels, sorted_dv, presorted=True)
-
-        tables = compute_contingency_tables(labels=sorted_labels,
-                                             decision_values=sorted_dv,
-                                             reference_lb=cdf_bounds.lower,
-                                             reference_ub=cdf_bounds.upper,
-                                             beta=beta, presorted=True)
+    if not tables: tables = get_contingency_tables(labels, decision_values,
+                                                   beta=beta, ci_fun=ci_fun,
+                                                   cdf_bounds=cdf_bounds,
+                                                   presorted=presorted)
 
     # LB on FPR corresponds to UB on PR curve and vice versa
-    return _lb_ub(lower=list(map(lambda t: (FPR(t), TPR(t)), tables.upper)),
-                  upper=list(map(lambda t: (FPR(t), TPR(t)), tables.lower)))
+    return _lb_ub(lower=sorted(map(lambda t: (FPR(t), TPR(t)), tables.upper)),
+                  upper=sorted(map(lambda t: (FPR(t), TPR(t)), tables.lower)))
 
 def pr_bounds(labels, decision_values, beta=0.0,
               ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
               tables=None, presorted=False):
-    """Returns bounds on the PR curve."""
+    """Returns bounds on the PR curve.
+
+    :param labels: the labels, such that True=known positive, False=known negative, None=unlabeled
+    :type labels: iterable
+    :param decision_values: the decision values
+    :type decision_values: iterable
+    :param beta: fraction of positives in the unlabeled set
+    :type beta: double
+    :param cdf_bounds: precomputed bounds on rank CDF of known positives
+    :type cdf_bounds: _lb_ub containing lists of (rank, TPR)-pairs
+    :param ci_fun: function to compute CDF bounds, ignored if cdf_bounds are given
+    :type ci_fun: callable
+    :param presorted: are labels and decision values already sorted (by descending decision values)
+    :type presorted: boolean
+
+    """
     # compute contingency tables if none are given
-    if not tables:
-        if presorted:
-            sorted_dv = decision_values
-            sorted_labels = labels
-        else:
-            sorted_dv, sorted_labels = zip(*sorted(zip(decision_values, labels),
-                                                reverse=True))
-
-        # compute confidence interval on rank CDF of known positives
-        # if no bounds are given
-        if not cdf_bounds:
-            cdf_bounds = ci_fun(sorted_labels, sorted_dv, presorted=True)
-
-        tables = compute_contingency_tables(labels=sorted_labels,
-                                            decision_values=sorted_dv,
-                                            reference_lb=cdf_bounds.lower,
-                                            reference_ub=cdf_bounds.upper,
-                                            beta=beta, presorted=True)
+    if not tables: tables = get_contingency_tables(labels, decision_values,
+                                                   beta=beta, ci_fun=ci_fun,
+                                                   cdf_bounds=cdf_bounds,
+                                                   presorted=presorted)
 
     # LB on FPR corresponds to UB on PR curve and vice versa
-    return _lb_ub(lower=list(map(lambda t: (TPR(t), precision(t)), tables.upper)),
-                  upper=list(map(lambda t: (TPR(t), precision(t)), tables.lower)))
+    return _lb_ub(lower=sorted(map(lambda t: (TPR(t), precision(t)), tables.upper)),
+                  upper=sorted(map(lambda t: (TPR(t), precision(t)), tables.lower)))
 
 def auc(curve):
     """Computes the area under the specified curve.
