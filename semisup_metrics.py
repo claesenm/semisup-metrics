@@ -489,8 +489,8 @@ def roc_bounds(labels, decision_values, beta=0.0,
                                                    presorted=presorted)
 
     # LB on FPR corresponds to UB on PR curve and vice versa
-    return _lb_ub(lower=sorted(map(lambda t: (FPR(t), TPR(t)), tables.upper)),
-                  upper=sorted(map(lambda t: (FPR(t), TPR(t)), tables.lower)))
+    return _lb_ub(lower=sorted(map(lambda t: (FPR(t), TPR(t)), tables.lower)),
+                  upper=sorted(map(lambda t: (FPR(t), TPR(t)), tables.upper)))
 
 def pr_bounds(labels, decision_values, beta=0.0,
               ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
@@ -518,8 +518,8 @@ def pr_bounds(labels, decision_values, beta=0.0,
                                                    presorted=presorted)
 
     # LB on FPR corresponds to UB on PR curve and vice versa
-    return _lb_ub(lower=sorted(map(lambda t: (TPR(t), precision(t)), tables.upper)),
-                  upper=sorted(map(lambda t: (TPR(t), precision(t)), tables.lower)))
+    return _lb_ub(lower=sorted(map(lambda t: (TPR(t), precision(t)), tables.lower)),
+                  upper=sorted(map(lambda t: (TPR(t), precision(t)), tables.upper)))
 
 def auc(curve):
     """Computes the area under the specified curve.
