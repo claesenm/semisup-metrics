@@ -310,7 +310,7 @@ def bootstrap_ecdf_bounds(labels, decision_values,
 
 def find_cutoff(ranks, n, last_cut, cutoff_rank):
     cut = last_cut
-    while cut < n and ranks[cut] <= cutoff_rank:
+    while cut < n and ranks[cut] <= cutoff_rank: # TODO: insert bisection
         cut += 1
     return cut
 
@@ -321,8 +321,13 @@ def surrogates_contingency(num_unl_less, nunl, TPR, npos_in_unl, lower=True):
     theta = int(theta)
 
     TP = min(num_unl_less, theta)
+
+    # account for the fact that all remaining positives (if any) must fit in the tail
+    ntail = nunl - num_unl_less
+    TP = max(TP, npos_in_unl - ntail)
+
     FN = npos_in_unl - TP
-    FP = max(0, num_unl_less - TP)
+    FP = num_unl_less - TP
     TN = nunl - npos_in_unl - FP
     return ContingencyTable(TP=TP, FP=FP, TN=TN, FN=FN)
 
@@ -388,7 +393,7 @@ def compute_contingency_tables(labels, decision_values, reference_lb=None,
 
     # iterate over ranks
     if ranks: ranks[:] = sorted(ranks)
-    else: ranks = known_pos_ranks
+    else: ranks = list(range(len(labels)))
     for rank in ranks:
         ct = ContingencyTable()
 
