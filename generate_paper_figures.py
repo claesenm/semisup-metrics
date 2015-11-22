@@ -4,6 +4,7 @@ from semisup_metrics import *
 from matplotlib import pyplot as plt
 import pickle
 import csv
+import util
 
 num_pos = 2000
 num_neg = 0
@@ -26,12 +27,12 @@ write_csv = False
 #               'mean_neg': 0.0, 'sigma_neg': 1.0}
 
 # config for figure 7 in the paper
-#dist_config = {'mean_pos': 2.0, 'sigma_pos': 2.0,
-#               'mean_neg': 0.0, 'sigma_neg': 1.0}
+dist_config = {'mean_pos': 2.0, 'sigma_pos': 2.0,
+               'mean_neg': 0.0, 'sigma_neg': 1.0}
 
 # config for figure 8 in the paper
-dist_config = {'mean_pos': 1.0, 'sigma_pos': 0.3,
-               'mean_neg': 0.0, 'sigma_neg': 1.0}
+#dist_config = {'mean_pos': 1.0, 'sigma_pos': 0.3,
+#               'mean_neg': 0.0, 'sigma_neg': 1.0}
 
 def generate_decvals(num, mean, sigma):
     return [random.normalvariate(mean, sigma) for _ in range(num)]

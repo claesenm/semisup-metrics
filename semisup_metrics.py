@@ -4,6 +4,7 @@
 
 import numpy as np
 import optunity
+import optunity.metrics
 import operator as op
 import math
 import collections
@@ -86,6 +87,9 @@ class ContingencyTable(object):
 
     def __str__(self):
         return "TP=%d, FP=%d, TN=%d, FN=%d" % (self.TP, self.FP, self.TN, self.FN)
+
+def roc_from_cts(cts):
+    return sorted(map(lambda t: (FPR(t), TPR(t)), cts))
 
 
 def sort_labels_by_dv(labels, decision_values):
@@ -579,8 +583,8 @@ def roc_bounds(labels, decision_values, beta=0.0, beta_ci=None,
                                                    switch_labels=switch_labels)
 
     # LB on FPR corresponds to UB on PR curve and vice versa
-    return _lb_ub(lower=sorted(map(lambda t: (FPR(t), TPR(t)), tables.lower)),
-                  upper=sorted(map(lambda t: (FPR(t), TPR(t)), tables.upper)))
+    return _lb_ub(lower=roc_from_cts(tables.lower),
+                  upper=roc_from_cts(tables.upper))
 
 def pr_bounds(labels, decision_values, beta=0.0, beta_ci=None,
               ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
@@ -667,7 +671,7 @@ def compute_labeled_cts(sorted_labels):
     return cts[1:]
 
 
-def bisect(f, lo, up, maxeval=15):
+def bisect(f, lo, up, maxeval=15, mindiff=0.0):
     """Standard bisection to find x in [lo, up] such that f(x) <= 0.0."""
     neval = 0
     flo = f(lo)
@@ -675,7 +679,8 @@ def bisect(f, lo, up, maxeval=15):
     if flo == 0.0: return lo
     if fup == 0.0: return up
 
-    evals = [lo, up]
+    print('%1.3f\t%1.3f\t%1.3f\t%1.3f' % (lo, flo, up, fup))
+    evals = [(lo, flo), (up, fup)]
 
     # make sure we initialize correctly
     assert((flo < 0.0 and fup > 0.0) or (flo > 0.0 and fup < 0.0))
@@ -689,263 +694,14 @@ def bisect(f, lo, up, maxeval=15):
 
     # recursion
     for neval in xrange(2, maxeval):
+        if abs(up - lo) < mindiff: return lo, evals
         new = float(lo + up) / 2
-        evals.append(new)
         fnew = f(new)
+        evals.append((new, fnew))
         if fnew > 0: up = new
         elif fnew < 0: lo = new
         else: return new, evals
 
     return lo, evals
 
-
-def estimate_beta(labels, decision_values,
-                  ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
-                  tables=None, presorted=False, switch_labels=False,
-                  beta_lo=0.01, beta_up=0.9,
-                  dist_to_lo=0.01, dist_to_up=0.01,
-                  estimate_lower=True, estimate_upper=True):
-
-    # if we need not estimate anything, calling this function is a waste of time
-    assert(estimate_lower or estimate_upper)
-
-    # sort labels and decision values
-    sorted_labels, sorted_dv = sort_labels_by_dv(labels, decision_values)
-    labeled_cts = compute_labeled_cts(sorted_labels)
-
-    #known_pos_ranks = [idx for idx, lab in enumerate(sorted_labels) if lab]
-    #known_pos_ecdf = compute_ecdf_curve(known_pos_ranks)#, maxrank)
-    #known_pos_ranks, known_pos_tprs = zip(*known_pos_ecdf)
-    #times = lambda x: lambda y: x * y
-    #cdf_bounds = _lb_ub(lower=zoh(known_pos_ranks, map(times(1.0 - dist_to_lo),
-    #                                                   known_pos_tprs),
-    #                              presorted=True),
-    #                    upper=zoh(known_pos_ranks, map(times(1.0 + dist_to_up),
-    #                                                   known_pos_tprs),
-    #                              presorted=True))
-
-    auc_from_cts = lambda cts: auc(sorted(map(lambda t: (TPR(t), precision(t)), cts)))
-
-    # function that computes the difference in AUROC based only
-    # on unlabeled instances and the AUROC based on all instances
-    # if the former is largest, beta is too high and vice versa.
-    # (this assumes a model better than random,
-    # such that higher beta implies higher AUROC as per the manuscript)
-    def beta_lb_fun(beta):
-        # contingency tables based on all instances, labeled and unlabeled
-        tables = get_contingency_tables(sorted_labels, sorted_dv,
-                                        beta=beta, ci_fun=ci_fun,
-                                        cdf_bounds=cdf_bounds,
-                                        presorted=True,
-                                        switch_labels=switch_labels)
-
-        # sanity check
-        assert(len(tables.upper) == len(labeled_cts))
-
-        # AUC for all instances
-        full_auc = auc_from_cts(tables.upper)
-
-        # to compute AUC for only unlabeled instances
-        # we subtract the contingency tables based on labeled instances
-        unlabeled_cts = map(lambda x, y: x - y, tables.upper, labeled_cts)
-        unlabeled_auc = auc_from_cts(unlabeled_cts)
-
-        # dist_to_lo serves as a margin to account for noise
-        # larger dist_to_lo leads to lower beta
-        diff = unlabeled_auc - full_auc + dist_to_lo
-#        diff = unlabeled_auc - full_auc
-        print('%1.3f\t%1.3f' % (beta, diff))
-        return diff
-
-
-    # function that computes the difference in AUROC based only
-    # on unlabeled instances and the AUROC based on all instances
-    # if the former is largest, beta is too high and vice versa.
-    # (this assumes a model better than random,
-    # such that higher beta implies higher AUROC as per the manuscript)
-    def beta_ub_fun(beta):
-        # contingency tables based on all instances, labeled and unlabeled
-        tables = get_contingency_tables(sorted_labels, sorted_dv,
-                                        beta=beta, ci_fun=ci_fun,
-                                        cdf_bounds=cdf_bounds,
-                                        presorted=True,
-                                        switch_labels=switch_labels)
-
-        # sanity check
-        assert(len(tables.lower) == len(labeled_cts))
-
-        # AUC for all instances
-        full_auc = auc_from_cts(tables.lower)
-
-        # to compute AUC for only unlabeled instances
-        # we subtract the contingency tables based on labeled instances
-        unlabeled_cts = map(lambda x, y: x - y, tables.lower, labeled_cts)
-        unlabeled_auc = auc_from_cts(unlabeled_cts)
-
-        # dist_to_lo serves as a margin to account for noise
-        # larger dist_to_lo leads to lower beta
-        diff = full_auc - dist_to_up - unlabeled_auc
-#        diff = full_auc - unlabeled_auc
-        print('%1.3f\t%1.3f' % (beta, -diff))
-        return diff
-
-    # find zero of beta_lb_fun
-    # we don't need many evals because 1% accuracy is plenty
-    if estimate_lower:
-        try:
-            beta_lo, evals_lo = bisect(beta_lb_fun, beta_lo, beta_up, maxeval=15)
-        except AssertionError:
-            raise ValueError('Failed to compute lower bound on beta, consider increasing dist_to_lo.')
-    else: beta_lo = None
-    if estimate_upper:
-        try:
-            beta_up, evals_up = bisect(beta_ub_fun, beta_up, beta_lo, maxeval=15)
-        except AssertionError:
-            raise ValueError('Failed to compute upper bound on beta, consider increasing dist_to_up.')
-    else: beta_up = None
-    return _lb_ub(lower=beta_lo, upper=beta_up), _lb_ub(lower=evals_lo, upper=evals_up)
-
-
-
-def beta_gap(labels, decision_values,
-            ci_fun=bootstrap_ecdf_bounds, cdf_bounds=None,
-            tables=None, presorted=False, switch_labels=False,
-            dist_to_lo=0.01, dist_to_up=0.01):
-
-    # sort labels and decision values
-    sorted_labels, sorted_dv = sort_labels_by_dv(labels, decision_values)
-    labeled_cts = compute_labeled_cts(sorted_labels)
-
-    auc_from_cts = lambda cts: auc(sorted(map(lambda t: (TPR(t), precision(t)), cts)))
-
-    # function that computes the difference in AUROC based only
-    # on unlabeled instances and the AUROC based on all instances
-    # if the former is largest, beta is too high and vice versa.
-    # (this assumes a model better than random,
-    # such that higher beta implies higher AUROC as per the manuscript)
-    def beta_lb_fun(beta):
-        # contingency tables based on all instances, labeled and unlabeled
-        tables = get_contingency_tables(sorted_labels, sorted_dv,
-                                        beta=beta, ci_fun=ci_fun,
-                                        cdf_bounds=cdf_bounds,
-                                        presorted=True,
-                                        switch_labels=switch_labels)
-
-        # sanity check
-        assert(len(tables.upper) == len(labeled_cts))
-
-        # AUC for all instances
-        full_auc = auc_from_cts(tables.upper)
-
-        # to compute AUC for only unlabeled instances
-        # we subtract the contingency tables based on labeled instances
-        unlabeled_cts = map(lambda x, y: x - y, tables.upper, labeled_cts)
-        unlabeled_auc = auc_from_cts(unlabeled_cts)
-
-        # dist_to_lo serves as a margin to account for noise
-        # larger dist_to_lo leads to lower beta
-        diff = unlabeled_auc - full_auc + dist_to_lo
-        print('%1.3f\t%1.3f' % (beta, diff))
-        return diff
-
-
-    # function that computes the difference in AUROC based only
-    # on unlabeled instances and the AUROC based on all instances
-    # if the former is largest, beta is too high and vice versa.
-    # (this assumes a model better than random,
-    # such that higher beta implies higher AUROC as per the manuscript)
-    def beta_ub_fun(beta):
-        # contingency tables based on all instances, labeled and unlabeled
-        tables = get_contingency_tables(sorted_labels, sorted_dv,
-                                        beta=beta, ci_fun=ci_fun,
-                                        cdf_bounds=cdf_bounds,
-                                        presorted=True,
-                                        switch_labels=switch_labels)
-
-        # sanity check
-        assert(len(tables.lower) == len(labeled_cts))
-
-        # AUC for all instances
-        full_auc = auc_from_cts(tables.lower)
-
-        # to compute AUC for only unlabeled instances
-        # we subtract the contingency tables based on labeled instances
-        unlabeled_cts = map(lambda x, y: x - y, tables.lower, labeled_cts)
-        unlabeled_auc = auc_from_cts(unlabeled_cts)
-
-        # dist_to_lo serves as a margin to account for noise
-        # larger dist_to_lo leads to lower beta
-        diff = full_auc - dist_to_up - unlabeled_auc
-        print('%1.3f\t%1.3f' % (beta, -diff))
-        return diff
-
-    betas = [0.01 * i for i in range(1, 90, 3)]
-    los = map(beta_lb_fun, betas)
-    ups = map(beta_ub_fun, betas)
-    return betas, los, ups
-
-
-
-#def estimate_beta(labels, probabilities):
-#    """
-#    Estimates the fraction of latent positives in the unlabeled set (beta)
-#    based on the predictions of a trained classifier on a validation set.
-
-#    :param labels: the labels (True means positive, False means negative, None means unlabeled)
-#    :type labels: bool or None
-#    :param probabilities: list of predicted probabilities
-#    :type probabilities: iterable of floats in [0, 1]
-
-#    :returns: estimate of beta (float)
-
-#    This estimation approach is based on the first estimator for 'c' as given in:
-
-#    Elkan, Charles, and Keith Noto. "Learning classifiers from only positive and unlabeled data."
-#    Proceedings of the 14th ACM SIGKDD international conference on Knowledge discovery and data mining.
-#    ACM, 2008.
-
-#    .. warning:
-
-#        This function raises a ValueError if:
-#            - no unlabeled instances are specified
-#            - no known positives are specified
-#            - all predicted probabilities for the known positives are exactly 0.0
-
-#    """
-#    nunlabeled = reduce(lambda accum, label: accum + (label == None), labels, 0)
-#    if nunlabeled == 0: raise ValueError('Cannot compute beta without unlabeled instances.')
-
-#    # estimate c = p(s == 1 | y == 1)
-#    # where c is the probability of a positive instance to be labeled
-#    pos_proba = map(op.itemgetter(1),
-#                    filter(op.itemgetter(0),
-#                           zip(labels, probabilities)))
-#    nknownpos = len(pos_proba)
-#    if nknownpos == 0: raise ValueError('Cannot compute beta without known positives.')
-
-#    c = sum(pos_proba) / nknownpos
-#    if c == 0.0: raise ValueError('Predicted probabilities for all known positives are 0.0.')
-
-#    # beta = p(y == 1 | s == 0)
-#    plabeledpos = float(nknownpos) / len(labels)
-#    beta1 = (1.0 - c) / c * plabeledpos / (1.0 - plabeledpos)
-
-#    # both appear equal in experiments
-#    e = float(nknownpos) / c
-#    nlatentpos = min(nunlabeled, e - nknownpos)
-#    beta2 = float(nlatentpos) / nunlabeled
-
-#    return beta2
-#    return beta1, beta2, c
-
-
-#import random
-#npos = 1000
-#nunl = 10000
-
-#labels = [True] * npos + [None] * nunl
-#probabilities = [0.1 + 0.9 * random.random() for _ in range(npos)] + [random.random() for _ in range(nunl)]
-#beta1, beta2, c = estimate_beta(labels, probabilities)
-
-#print('%1.4f\t%1.4f\f%1.4f' % (beta1, beta2, c))
 

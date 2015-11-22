@@ -85,9 +85,9 @@ if choice == 'gaussians':
     dist_config = {'mean_pos': 1.0, 'sigma_pos': 1.0,
                    'mean_neg': 0.0, 'sigma_neg': 1.0}
 
-    num_pos = 2000
+    num_pos = 1000
     num_neg = 0
-    num_unl = 10000
+    num_unl = 5000
     beta = 0.2
     guessed_pfrac = 0.2
 
@@ -203,8 +203,24 @@ plt.legend(['true curve', 'beta=0', 'expected region'], loc=1)
 plt.title('Precision-Recall curve')
 plt.show()
 
-dist_to_lo = 0.01
-dist_to_up = 0.01
+dist_to_lo = 0.05
+dist_to_up = 0.05
+
+
+#beta_lb, evals_lb = ss.estimate_beta_lb(labels=sort_labels, decision_values=sort_dv,
+#                              cdf_bounds=cdf_bounds, presorted=True,
+#                              dist_to_lo=dist_to_lo, dist_to_up=dist_to_up)
+
+#print("\n\nBETA LB %1.4f \t\t TRUTH: %1.4f\n\n" % (beta_lb, beta))
+#for k, v in evals_lb:
+#    print("%1.3f\t%1.3f" % (k, v))
+
+#beta_ub, betas_ub = ss.estimate_beta_ub(labels=sort_labels, decision_values=sort_dv,
+#                              cdf_bounds=cdf_bounds, presorted=True,
+#                              dist_to_lo=dist_to_lo, dist_to_up=dist_to_up)
+
+#print("\n\nBETA UB %1.4f \t\t TRUTH: %1.4f\n\n" % (beta_ub, beta))
+
 betahat, evals = ss.estimate_beta(labels=sort_labels, decision_values=sort_dv,
                                   cdf_bounds=cdf_bounds, presorted=True,
                                   dist_to_lo=dist_to_lo, dist_to_up=dist_to_up)
@@ -220,12 +236,12 @@ betas, los, ups = ss.beta_gap(labels=sort_labels, decision_values=sort_dv,
 plt.figure(4)
 plt.plot(betas, los, 'b--')
 plt.plot(betas, ups, 'r--')
-plt.plot([betahat.lower, betahat.lower], [min(los + ups), max(los + ups)], 'b', linewidth=3)
-plt.plot([betahat.upper, betahat.upper], [min(los + ups), max(los + ups)], 'r', linewidth=3)
+#plt.plot([betahat.lower, betahat.lower], [min(los + ups), max(los + ups)], 'b', linewidth=3)
+#plt.plot([betahat.upper, betahat.upper], [min(los + ups), max(los + ups)], 'r', linewidth=3)
 plt.plot([beta, beta], [min(los + ups), max(los + ups)], 'k', linewidth=3)
 plt.plot([min(betas), max(betas)], [0, 0], 'k')
-plt.plot(evals.lower, [0.0] * len(evals.lower), 'bx', markersize=10)
-plt.plot(evals.upper, [0.0] * len(evals.upper), 'rx', markersize=10)
+#plt.plot(evals.lower, [0.0] * len(evals.lower), 'bx', markersize=10)
+#plt.plot(evals.upper, [0.0] * len(evals.upper), 'rx', markersize=10)
 plt.xlabel(r'$\hat{\beta}$')
 plt.ylabel('gap')
 plt.legend(['lower gap', 'upper gap', r'$\hat{\beta}_{lo}$', r'$\hat{\beta}_{up}$', r'$\beta$'])
