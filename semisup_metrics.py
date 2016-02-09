@@ -3,6 +3,7 @@
 # After review, everything will be made publicly available under a BSD license.
 
 import numpy as np
+import scipy.stats
 import optunity
 import optunity.metrics
 import operator as op
@@ -91,6 +92,8 @@ class ContingencyTable(object):
 def roc_from_cts(cts):
     return sorted(map(lambda t: (FPR(t), TPR(t)), cts))
 
+def pr_from_cts(cts):
+    return sorted(map(lambda t: (TPR(t), precision(t)), cts))
 
 def sort_labels_by_dv(labels, decision_values):
     """Returns labels and decision values, sorted by descending decision values.
@@ -704,4 +707,79 @@ def bisect(f, lo, up, maxeval=15, mindiff=0.0):
 
     return lo, evals
 
+def estimate_beta_by_labeling(npos, nneg, L=0.95, aprior=1, bprior=1,
+                              HPD=True, HPD_step=0.001):
+    """Computes a credible interval of length L for beta,
+    after acquiring npos and nneg positives and negatives, respectively,
+    by labeling a random sample of the unlabeled set.
+
+    :param npos: number of random unlabeled instances that are positive
+    :type npos: int
+    :param nneg: number of random unlabeled instances that are negative
+    :type nneg: int
+    :param L: length of the credible interval (default 0.95)
+    :type L: float
+    :param aprior: a parameter of the Beta prior (default 1)
+    :param bprior: b parameter of the Beta prior (default 1)
+    :param HPD: credible interval based on the Highest Posterior Density region?
+    :type HPD: boolean (default True)
+    :param HPD_step: step to use in computing HPD region (default 0.001)
+    :type HPD_step: float
+    :result: lower and upper bound on beta
+
+    """
+    a = aprior + npos
+    b = bprior + nneg
+    qlo = (1.0 - L) / 2
+    qup = 0.5 + L / 2
+    lo = scipy.stats.beta.ppf(qlo, a, b)
+    up = scipy.stats.beta.ppf(qup, a, b)
+
+    if HPD:
+
+        update_bound = lambda oldq, delta: scipy.stats.beta.ppf(oldq + delta, a, b)
+        delta = HPD_step
+
+        while True:
+            d = up - lo
+            # print("%1.5f\t%1.5f\t%1.5f" % (qlo, qup, d))
+
+            # search right
+            lo_new = update_bound(qlo, delta)
+            up_new = update_bound(qup, delta)
+
+            if up_new - lo_new < d:
+                qlo += delta
+                qup += delta
+                lo = lo_new
+                up = up_new
+            elif delta > 0.0:
+                # switch search direction
+                delta *= -1.0
+            else:
+                # converged
+                break
+
+    return _lb_ub(lower=lo, upper=up)
+
+def simulate_estimating_beta(unlabeled_labels, n, L=0.95, HPD=True, HPD_step=0.001):
+    """Simulates estimating a range on beta by explicitly labeling
+    a random subset of all unlabeled instances.
+
+    :param unlabeled_labels: true labels of the unlabeled instances
+    :type unlabeled_labels: list, True/False elements
+    :param n: number of instances to sample
+    :param L: length of the credible interval to compute (default 0.95)
+    :param HPD: credible interval based on the Highest Posterior Density region?
+    :type HPD: boolean (default True)
+    :param HPD_step: step to use in computing HPD region (default 0.001)
+    :type HPD_step: float
+    :result: lower and upper bound on beta
+
+    """
+    assert(n <= len(unlabeled_labels))
+    sample = np.random.choice(unlabeled_labels, size=n, replace=False)
+    npos = sum(sample)
+    nneg = sample.size - npos
+    return estimate_beta_by_labeling(npos, nneg, L, HPD, HPD_step)
 
