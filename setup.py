@@ -23,4 +23,5 @@ setup(
     platforms = ['any'],
     keywords = ['machine learning', 'semi-supervised learning', 'classification',
                 'performance metrics', 'roc'],
+    install_requires = ['numpy', 'scipy', 'optunity']
 )
