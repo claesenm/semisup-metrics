@@ -10,5 +10,12 @@ installed and the following command within this project’s root directory::
 
     ipython notebook
 
+To run all code, you will need the following Python libraries:
+
+- scipy.stats
+- numpy
+- optunity
+- matplotlib
+
 This code was developed by Marc Claesen while at the STADIUS lab of KU Leuven, Dept. of Electrical Engineering. If this code is useful,
 please cite the accompanying paper.
