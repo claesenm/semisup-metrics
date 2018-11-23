@@ -17,5 +17,8 @@ To run all code, you will need the following Python libraries:
 - optunity
 - matplotlib
 
+When checking out the code in Windows it is possible, depending on your git settings, that data.pkl will need its line endings changed.
+This can be done by using a tool such as dos2unix.
+
 This code was developed by Marc Claesen while at the STADIUS lab of KU Leuven, Dept. of Electrical Engineering. If this code is useful,
 please cite the accompanying paper.

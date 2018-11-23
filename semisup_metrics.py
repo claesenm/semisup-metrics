@@ -10,6 +10,10 @@ import operator as op
 import math
 import collections
 import array
+try:  # python 2/3 compatibility
+    from functools import reduce
+except ImportError:
+    pass
 
 _lb_ub = collections.namedtuple("lb_ub", ["lower", "upper"])
 
